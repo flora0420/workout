@@ -1,0 +1,103 @@
+---
+title: "Quantify Activity via KNN"
+author: "Flora Xu"
+date: "7/9/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(caret)
+library(ggplot2)
+```
+
+## Summary
+This project is to predict the manner in which the 6 participants did the exercise. We fit the numeric data measured on the belt, forearm, arm, and dumbbell from the training set of 19,622 samples using k-nearest neigours with 10-fold cross-validated, and make prediction on the testing data.  
+
+## Data
+We download the data and store training and testing data into local files `pml-training.csv` and `pml-testing.csv` respectively. 
+```{r, include=FALSE}
+train.file <- "~/R/packages/ds/projects/workout/pml-training.csv"
+test.file <- "~/R/packages/ds/projects/workout/pml-testing.csv"
+```
+
+```{r download, message=FALSE, eval=FALSE}
+download.file(url = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", 
+              destfile = train.file, method = "curl", quiet = T)
+download.file(url = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", 
+              destfile = test.file, method = "curl", quiet = T)
+```
+
+After the downloading, we load the training data into R and get ready for a bit exploration and preparation. 
+```{r training, cache=TRUE, message=F, warning=F}
+training <- read.csv(train.file, as.is = T)
+```
+
+### Data Preparation
+The response variable `classe` is ordinal and we first convert the data into factors with given levels. 
+```{r factor}
+training$classe <- factor(training$classe, levels = c("A", "B", "C", "D", "E"))
+```
+
+Notice that there are quite a few variables that its marjority is missing or empty, we choose to remove these columns. 
+```{r missing}
+missing.col <- which(sapply(training, 
+                      FUN = function(c){sum(is.na(c))})/nrow(training)> .9 )
+empty.col <- which(sapply(training, FUN = function(c){sum(c == "")}) > 0)
+
+red.training <- training[, -c(missing.col, empty.col)]
+```
+
+Further, we would like to use those measurements on the belt, arm, forearm, and dumbbell as predictors. 
+```{r numeric}
+## keep those with belt, arm, forearm, dumbell
+tokeep <- unique(unlist(sapply(c("belt", "arm", "forearm", "dumbbell"),
+                 FUN = function(pattern){grep(pattern = pattern, names(red.training))})))
+red.training <- red.training[, c(tokeep, 60)]
+```
+
+We shall take a peek at the relationship among some variables, for example roll_belt and roll_forearm and the response variable.
+```{r peek}
+qplot(roll_belt, roll_forearm, colour = classe, data = red.training)
+```
+We can see some clustering within the roll_belt and roll_forearm. 
+
+## Fitting The Data
+As the response data is categorical, we can try k-nearest neighours algorithm to fit the data; that is, treating it as a classificatio problem: given the predictors, the model needs to determine which category does the record falls on, either A or B or C or D or E.   
+
+We set up a 10-fold cross validation in training the model. 
+```{r modFit, message=FALSE, cache=TRUE, warning=FALSE}
+train_control <- trainControl(method="cv", number=10)
+
+set.seed(234)
+fit <- train(classe ~ ., 
+             data = red.training,
+             method = "knn",
+             preProcess = c("center", "scale"),
+             tuneLength = 20,
+             trControl = train_control)
+```
+```{r showfit}
+print(fit)
+```
+As the final model chose has an accurary .9768619. The fit is fairly good. We believe that random forest will improve the accuracy, yet, we will leave it here as the rf will take much longer time to run. 
+
+### Error
+The expected out-of-sample error will be a bit higher than the in-sample error.  
+```{r, in-sample, cache=T}
+pred.classe <- predict(fit, newdata = red.training) 
+confusionMatrix(pred.classe, red.training$classe)
+```
+
+
+### Prediction
+We need to load the testing data and remove the same columns as we did on the training data. 
+```{r testing, comment=""}
+testing <- read.csv(test.file, as.is = T)
+red.testing <- testing[, -c(missing.col, empty.col)]
+red.testing <- red.testing[, c(tokeep)]
+
+data.frame(problem_id = 1:20, classe = predict(fit, red.testing))
+```
+
+Using this model, we only made one mistake on problem.id == 3. 
